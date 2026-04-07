@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ATSense CV Analyzer | Smart CV Analysis</title>
+  <link
+    href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=DM+Sans:wght@300;400;500;600&display=swap"
+    rel="stylesheet" />
+    <link rel="shortcut icon" href="file-share.png" type="image/x-icon">
+  <script src="https://cdn.jsdelivr.net/npm/vue@3/dist/vue.global.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
+  <link rel="stylesheet" href="index.css" />
+</head>
+
+<body>
+  <div id="app">
+
+    <div class="loading-overlay" v-if="loading">
+      <div class="loading-box">
+        <div class="spinner"></div>
+        <p class="loading-title" style="font-weight: 500; margin-bottom: 6px;">Analyzing your CV</p>
+        <p class="loading-sub" style="font-size: 13px; color: var(--text2);">{{ loadingMessages[loadingStep] }}</p>
+        <div class="steps">
+          <div class="step" v-for="i in 3" :key="i" :class="{active: loadingStep >= i-1}"></div>
+        </div>
+      </div>
+    </div>
+
+    <header>
+      <div class="logo">
+        <div class="logo-icon">📄</div><span class="logo-text">ATSense</span><span class="logo-badge">CV Analyzer</span>
+      </div>
+      <div class="header-nav">
+        <button class="nav-btn" @click="resetToHome" v-if="view === 'results'">← New Analysis</button>
+        <button class="nav-btn" @click="loadSampleCV">Load Example CV</button>
+      </div>
+    </header>
+
+    <main>
+      <transition name="view" mode="out-in">
+        <!-- HOME VIEW: CV UPLOAD ONLY -->
+        <div v-if="view === 'home'" key="home" class="anim-fade">
+          <div class="hero">
+            <div class="hero-tag">📊 ATS Compatibility Checker</div>
+            <h1>Upload your CV,<br>get <em>instant feedback</em></h1>
+            <p class="hero-sub">Analyze structure, keyword density, missing sections, and formatting issues. Get
+              actionable recommendations to beat ATS filters.</p>
+          </div>
+
+          <div class="cv-card">
+            <div class="card-header">
+              <span class="card-label">📄 Your Curriculum Vitae</span>
+              <span class="word-counter">{{ cvWordCount }} words</span>
+            </div>
+
+            <!-- File upload zone -->
+            <div class="file-zone">
+              <label class="file-label">
+                📂 Upload CV (.txt / .pdf)
+                <input type="file" accept=".txt,.pdf,.text/plain" @change="handleCVFileUpload" style="display: none;">
+              </label>
+              <div class="file-info" v-if="cvFileName">
+                📎 {{ cvFileName }}
+                <button class="remove-file" @click="clearCVFile">✖</button>
+              </div>
+              <div class="file-info" v-else>✨ Paste text or upload file</div>
+            </div>
+
+            <textarea v-model="cvText" rows="12"
+              placeholder="Paste your full CV here — work experience, education, skills, achievements, contact info... Or upload a .txt/.pdf file."></textarea>
+
+            <div class="analyze-row">
+              <button class="btn-primary" @click="analyzeCV" :disabled="!cvText.trim()">Analyze CV →</button>
+              <button class="btn-ghost" @click="clearCV" v-if="cvText">Clear</button>
+            </div>
+            <p class="sample-hint">👤 No CV ready? <a @click="loadSampleCV">Load a professional sample</a> to see the
+              analysis in action.</p>
+          </div>
+        </div>
+
+        <!-- RESULTS VIEW: full analysis -->
+        <div v-else-if="view === 'results'" key="results">
+          <div class="results-header">
+            <button class="back-btn" @click="resetToHome">← New CV</button>
+            <div>
+              <div class="results-title">CV Health Report</div>
+              <div class="results-subtitle" style="font-size: 12px; color: var(--text2);">Analyzed {{ new
+                Date().toLocaleDateString() }} · {{ result.words || 0 }} words</div>
+            </div>
+          </div>
+
+          <!-- SCORE CIRCLE -->
+          <div class="score-hero">
+            <div class="score-ring-wrap">
+              <svg width="120" height="120" viewBox="0 0 120 120">
+                <circle cx="60" cy="60" r="50" fill="none" stroke="#1c2030" stroke-width="10" />
+                <circle cx="60" cy="60" r="50" fill="none" :stroke="scoreGradientId" stroke-width="10"
+                  stroke-linecap="round" :stroke-dasharray="314"
+                  :stroke-dashoffset="314 - (314 * result.score / 100)" />
+              </svg>
+              <defs>
+                <linearGradient id="scoreGrad" x1="0" y1="0" x2="1" y2="1">
+                  <stop offset="0%" :stop-color="scoreColors.from" />
+                  <stop offset="100%" :stop-color="scoreColors.to" />
+                </linearGradient>
+              </defs>
+              <div class="score-center"><span class="score-number" :style="{color: scoreColors.main}">{{ result.score
+                  }}</span><span class="score-pct">/100</span></div>
+            </div>
+            <div class="score-info">
+              <div class="score-verdict" :style="{color: scoreColors.main}">{{ scoreVerdict }}</div>
+              <div class="score-desc">{{ scoreDescription }}</div>
+              <div class="sub-score-list">
+                <div class="sub-score-item" v-for="s in subScores" :key="s.label">
+                  <div class="sub-score-top"><span class="sub-score-label">{{ s.label }}</span><span
+                      class="sub-score-val" :style="{color: s.color}">{{ s.val }}%</span></div>
+                  <div class="progress-bar">
+                    <div class="progress-fill" :style="{width: s.val + '%', background: s.color}"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- METRICS -->
+          <div class="metrics-grid">
+            <div class="metric-card" v-for="m in metrics" :key="m.label">
+              <div class="metric-label">{{ m.label }}</div>
+              <div class="metric-value" :style="{color: m.color}">{{ m.value }}</div>
+              <div class="metric-sub">{{ m.sub }}</div>
+            </div>
+          </div>
+
+          <!-- CRITICAL KEYWORDS (no JD, but we show industry terms & missing best practices) -->
+          <div class="two-col">
+            <div class="card">
+              <div class="card-title"><span
+                  style="background: var(--success); width: 8px; height: 8px; border-radius: 50%; display: inline-block;"></span>
+                Strong Indicators</div>
+              <div class="tags">
+                <span class="tag" v-for="k in result.strongPoints" :key="k">{{ k }}</span>
+                <span v-if="!result.strongPoints?.length" style="color: var(--text3); font-size: 13px;">Add metrics,
+                  bullet points & keywords</span>
+              </div>
+            </div>
+            <div class="card">
+              <div class="card-title"><span
+                  style="background: var(--warning); width: 8px; height: 8px; border-radius: 50%; display: inline-block;"></span>
+                Improvement Areas</div>
+              <div class="tags">
+                <span class="tag tag-missing" v-for="k in result.weaknessFlags" :key="k">{{ k }}</span>
+                <span v-if="!result.weaknessFlags?.length" style="color: var(--success); font-size: 13px;">No major red
+                  flags found</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- SECTIONS + FORMAT -->
+          <div class="two-col">
+            <div class="card">
+              <div class="card-title">📑 Section Detection</div>
+              <div class="sections-grid">
+                <div class="section-item" v-for="s in result.sections || []" :key="s.name">
+                  <span class="section-dot" :style="{background: s.found ? 'var(--success)' : 'var(--danger)'}"></span>
+                  <span>{{ s.name }}</span>
+                </div>
+              </div>
+            </div>
+            <div class="card">
+              <div class="card-title">✅ Format & Readability</div>
+              <div class="sections-grid">
+                <div class="section-item" v-for="f in result.formatChecks || []" :key="f.name">
+                  <span class="section-dot" :style="{background: f.ok ? 'var(--success)' : 'var(--danger)'}"></span>
+                  <span>{{ f.name }}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- RECOMMENDATIONS -->
+          <div class="card">
+            <div class="card-title">💡 Personalized Recommendations</div>
+            <div class="rec-list">
+              <div class="rec-item" :class="r.type" v-for="r in result.recs || []" :key="r.text">
+                <span class="rec-badge" :class="r.type">{{ r.type === 'high' ? 'HIGH PRIORITY' : r.type === 'med' ?
+                  'MEDIUM' : 'LOW' }}</span>
+                <span class="rec-text">{{ r.text }}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </transition>
+    </main>
+    <footer>🔒 Privacy-first: All analysis runs locally in your browser. No data is uploaded to any server.</footer>
+  </div>
+
+  <script>
+    const { createApp, ref, computed } = Vue;
+
+    // sample CV text (standalone)
+    const SAMPLE_CV = `Jennifer Chen
+Senior Product Marketing Manager | jennifer.chen@example.com | linkedin.com/in/jenniferchen
+
+PROFESSIONAL SUMMARY
+Strategic B2B SaaS marketing leader with 8+ years of experience driving product launches, GTM strategies, and revenue growth. Increased pipeline contribution by 156% YoY through data-driven campaigns. Expert in cross-functional leadership and competitive positioning.
+
+WORK EXPERIENCE
+Senior Product Marketing Manager — CloudScale Inc., San Francisco (2021–Present)
+• Led 4 product launches generating $12M in ARR within first 6 months
+• Developed buyer personas and competitive battle cards, improving win rate by 34%
+• Partnered with product to define messaging framework used across 50+ enterprise deals
+
+Product Marketing Manager — TechFlow Solutions (2018–2021)
+• Created sales enablement content that reduced sales cycle by 22%
+• Boosted organic blog traffic by 180% via SEO-driven content strategy
+• Managed analyst relations; secured inclusion in 3 Gartner reports
+
+EDUCATION
+MBA, Marketing — UC Berkeley, Haas School of Business (2018)
+B.A. Communications — University of Southern California (2014)
+
+SKILLS
+GTM Strategy · Product Launch · Competitive Intelligence · Market Research · Salesforce · HubSpot · SEO/SEM · Storytelling · Cross-functional Leadership
+
+CERTIFICATIONS
+Pragmatic Institute Certified (PMC) · HubSpot Inbound Marketing`;
+
+    createApp({
+      setup() {
+        const view = ref('home');
+        const cvText = ref('');
+        const loading = ref(false);
+        const loadingStep = ref(0);
+        const result = ref({});
+        const cvFileName = ref('');
+
+        const loadingMessages = ['Scanning CV structure...', 'Checking formatting & keywords...', 'Generating insights...'];
+
+        const cvWordCount = computed(() => cvText.value.trim() ? cvText.value.trim().split(/\s+/).filter(w => w.length).length : 0);
+
+        // Helper functions
+        function tokenize(text) { return text.toLowerCase().match(/\b[a-z][a-z0-9+#.\-]{2,}\b/g) || []; }
+
+        function checkSection(cv, keywords) { return keywords.some(k => cv.toLowerCase().includes(k)); }
+
+        function analyzeCVLogic() {
+          const cv = cvText.value;
+          if (!cv.trim()) return;
+
+          const words = cv.trim().split(/\s+/).length;
+          const hasEmail = /@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/.test(cv);
+          const hasLinkedIn = /linkedin/i.test(cv);
+          const hasPhone = /(\+\d{1,3}[\s-]?)?\(?\d{3}\)?[\s-]?\d{3}[\s-]?\d{4}/.test(cv);
+          const hasNumbers = /\d+[\%\+x]|\$\d+|\d+\s*(years?|months?|people|engineers?|users?|clients?|team|projects?|increase|decrease|growth)/i.test(cv);
+          const hasBullets = (cv.match(/[•\-\*]/g) || []).length > 2;
+
+          // Section detection
+          const sectionDefs = [
+            { name: 'Work Experience', kws: ['experience', 'employment', 'work history', 'position', 'roles'] },
+            { name: 'Education', kws: ['education', 'degree', 'university', 'college', 'bachelor', 'master', 'phd'] },
+            { name: 'Skills', kws: ['skills', 'technologies', 'tools', 'expertise', 'competencies'] },
+            { name: 'Contact Info', kws: ['email', 'phone', 'linkedin', '@', 'mobile'] },
+            { name: 'Professional Summary', kws: ['summary', 'profile', 'about', 'objective'] },
+            { name: 'Achievements', kws: ['achievement', 'award', 'recognition', 'certification', 'certified'] }
+          ];
+          const sections = sectionDefs.map(s => ({ name: s.name, found: checkSection(cv, s.kws) }));
+          const sectionScore = Math.round((sections.filter(s => s.found).length / sections.length) * 100);
+
+          // Length score
+          const lengthScore = words < 200 ? 35 : (words > 1100 ? 60 : (words >= 350 && words <= 850 ? 100 : 75));
+          const quantScore = hasNumbers ? (hasBullets ? 95 : 70) : 30;
+          const formatScore = (hasEmail ? 20 : 0) + (hasLinkedIn ? 15 : 0) + (hasPhone ? 10 : 0) + (hasBullets ? 25 : 0) + (hasNumbers ? 30 : 0);
+          const maxFormat = 100;
+          const finalFormatScore = Math.min(100, formatScore);
+
+          const overall = Math.round(sectionScore * 0.35 + lengthScore * 0.2 + quantScore * 0.3 + finalFormatScore * 0.15);
+
+          // strong points & weakness flags
+          const strongPoints = [];
+          if (hasNumbers) strongPoints.push('📊 Quantified results');
+          if (hasBullets) strongPoints.push('✓ Bullet points');
+          if (hasEmail && hasLinkedIn) strongPoints.push('📧 Complete contact info');
+          if (words >= 350 && words <= 850) strongPoints.push('📄 Optimal length');
+          if (sections.find(s => s.name === 'Skills')?.found) strongPoints.push('⚙️ Skills section');
+
+          const weaknessFlags = [];
+          if (!hasNumbers) weaknessFlags.push('Missing metrics');
+          if (!hasBullets) weaknessFlags.push('No bullet points');
+          if (!hasEmail) weaknessFlags.push('Missing email');
+          if (!hasLinkedIn) weaknessFlags.push('LinkedIn missing');
+          if (words < 250) weaknessFlags.push('Too short');
+          if (words > 1100) weaknessFlags.push('Too long');
+          if (!sections.find(s => s.name === 'Skills')?.found) weaknessFlags.push('No skills section');
+
+          const formatChecks = [
+            { name: 'Email present', ok: hasEmail }, { name: 'LinkedIn profile', ok: hasLinkedIn },
+            { name: 'Phone number', ok: hasPhone }, { name: 'Bullet points', ok: hasBullets },
+            { name: 'Quantifiable impact', ok: hasNumbers }, { name: 'Word count (250-900)', ok: words >= 250 && words <= 900 }
+          ];
+
+          // recs
+          const recs = [];
+          if (!hasNumbers) recs.push({ type: 'high', text: 'Add quantifiable achievements (e.g., "increased sales by 35%", "managed $2M budget", "led team of 12").' });
+          if (!hasBullets) recs.push({ type: 'high', text: 'Use bullet points for experience entries. ATS parsers and recruiters prefer scannable lists.' });
+          if (words < 250) recs.push({ type: 'high', text: `CV is very short (${words} words). Expand descriptions with concrete responsibilities and outcomes.` });
+          if (!sections.find(s => s.name === 'Skills')?.found) recs.push({ type: 'high', text: 'Create a dedicated Skills section to help ATS match keywords quickly.' });
+          if (!hasEmail) recs.push({ type: 'high', text: 'No email address detected. Place contact info clearly at the top.' });
+          if (!hasLinkedIn) recs.push({ type: 'med', text: 'Include a LinkedIn URL — many recruiters and ATS platforms expect it.' });
+          if (!sections.find(s => s.name === 'Professional Summary')?.found) recs.push({ type: 'med', text: 'Add a professional summary to frame your profile and include role-specific keywords.' });
+          if (sectionScore < 60) recs.push({ type: 'med', text: 'Missing key sections (e.g., Experience, Education). Use clear headings.' });
+          if (words > 1100) recs.push({ type: 'med', text: `CV length exceeds 1100 words. Trim older/irrelevant roles to 1-2 pages.` });
+          if (recs.length === 0) recs.push({ type: 'low', text: 'Excellent CV! For extra polish, tailor the summary for each application and align with job-specific keywords.' });
+
+          result.value = {
+            score: overall,
+            strongPoints: strongPoints.slice(0, 6),
+            weaknessFlags: weaknessFlags.slice(0, 6),
+            sections,
+            formatChecks,
+            recs,
+            words,
+            sectionScore,
+            quantScore,
+            lengthScore,
+            formatScore: finalFormatScore
+          };
+        }
+
+        async function extractTextFromFile(file) {
+          if (!file) return '';
+          if (file.type === 'text/plain' || file.name.endsWith('.txt')) {
+            return await file.text();
+          } else if (file.type === 'application/pdf' || file.name.endsWith('.pdf')) {
+            if (!window.pdfjsLib) throw new Error('PDF library not ready. Refresh page.');
+            const arrayBuffer = await file.arrayBuffer();
+            const pdf = await window.pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+            let fullText = '';
+            for (let i = 1; i <= pdf.numPages; i++) {
+              const page = await pdf.getPage(i);
+              const textContent = await page.getTextContent();
+              fullText += textContent.items.map(item => item.str).join(' ') + '\n';
+            }
+            return fullText;
+          } else {
+            throw new Error('Please upload .txt or .pdf file');
+          }
+        }
+
+        async function handleCVFileUpload(event) {
+          const file = event.target.files[0];
+          if (!file) return;
+          try {
+            const text = await extractTextFromFile(file);
+            cvText.value = text;
+            cvFileName.value = file.name;
+          } catch (err) {
+            alert('Error: ' + err.message);
+          }
+        }
+
+        function clearCVFile() { cvFileName.value = ''; cvText.value = ''; }
+        function clearCV() { cvText.value = ''; cvFileName.value = ''; }
+
+        function analyzeCV() {
+          if (!cvText.value.trim()) return;
+          loading.value = true; loadingStep.value = 0;
+          [0, 1, 2].forEach((s, i) => setTimeout(() => { loadingStep.value = s; }, i * 500));
+          setTimeout(() => {
+            analyzeCVLogic();
+            loading.value = false;
+            view.value = 'results';
+          }, 1600);
+        }
+
+        function loadSampleCV() {
+          cvText.value = SAMPLE_CV;
+          cvFileName.value = '';
+        }
+
+        function resetToHome() {
+          view.value = 'home';
+          result.value = {};
+        }
+
+        const scoreColors = computed(() => {
+          const s = result.value.score || 0;
+          if (s >= 75) return { main: '#34d399', from: '#34d399', to: '#059669' };
+          if (s >= 55) return { main: '#fbbf24', from: '#fbbf24', to: '#d97706' };
+          return { main: '#f87171', from: '#f87171', to: '#dc2626' };
+        });
+        const scoreGradientId = computed(() => 'url(#scoreGrad)');
+        const scoreVerdict = computed(() => {
+          const s = result.value.score || 0;
+          return s >= 80 ? 'ATS-Ready' : s >= 65 ? 'Solid Foundation' : s >= 50 ? 'Needs Improvement' : 'Critical Gaps';
+        });
+        const scoreDescription = computed(() => {
+          const s = result.value.score || 0;
+          if (s >= 80) return 'Your CV is well-structured, includes key sections and achievements. Minor tweaks can maximize impact.';
+          if (s >= 65) return 'Good CV overall. Focus on adding metrics and bullet points to stand out.';
+          if (s >= 50) return 'Missing essential elements. Follow high-priority recommendations to increase ATS pass rate.';
+          return 'Significant overhaul needed. Start with contact info, quantified achievements, and clear sections.';
+        });
+        const subScores = computed(() => {
+          if (!result.value.score) return [];
+          return [
+            { label: 'Section Coverage', val: result.value.sectionScore || 0, color: '#4f8ef7' },
+            { label: 'Quantified Impact', val: result.value.quantScore || 0, color: '#7b5cfa' },
+            { label: 'Length Optimization', val: result.value.lengthScore || 0, color: '#fbbf24' },
+            { label: 'Format & Contact', val: result.value.formatScore || 0, color: '#34d399' }
+          ];
+        });
+        const metrics = computed(() => {
+          if (!result.value.score) return [];
+          const r = result.value;
+          return [
+            { label: 'Overall Score', value: r.score + '%', color: scoreColors.value.main, sub: scoreVerdict.value },
+            { label: 'Word Count', value: r.words, color: '#e8eaf2', sub: r.words < 300 ? 'Too short' : r.words > 1000 ? 'Verbose' : 'Good length' },
+            { label: 'Sections Found', value: r.sections?.filter(s => s.found).length + '/' + r.sections?.length, color: '#4f8ef7', sub: 'standard sections' },
+            { label: 'Metrics Used', value: (r.quantScore > 70 ? '✅ Yes' : '⚠️ Missing'), color: r.quantScore > 70 ? '#34d399' : '#f87171', sub: 'numbers & % results' }
+          ];
+        });
+
+        return { view, cvText, loading, loadingStep, loadingMessages, result, cvWordCount, cvFileName, handleCVFileUpload, clearCVFile, clearCV, analyzeCV, loadSampleCV, resetToHome, scoreColors, scoreGradientId, scoreVerdict, scoreDescription, subScores, metrics };
+      }
+    }).mount('#app');
+  </script>
+</body>
+
+</html>
